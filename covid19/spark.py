@@ -8,17 +8,6 @@
 ! pip install --ignore-installed --upgrade git+https://github.com/ottomata/wmfdata.git@conda
 
 #%%
-
-import wmfdata
-
-# %%
-
-%matplotlib inline
-
-from IPython.core.display import display, HTML
-import matplotlib.pyplot as plt
-
-
 import imageio
 from io import BytesIO
 from PIL import Image
@@ -33,8 +22,7 @@ import numpy as np
 import os
 import pandas as pd
 import re
-
-plt.rcParams["figure.figsize"] = (20,15)
+import wmfdata
 
 # %%
 spark = wmfdata.spark.get_session(app_name = 'coviding', ship_python_env=False)
@@ -49,3 +37,5 @@ from pyspark.sql.dataframe import DataFrame
 def transform(self, func):
     return func(self)
 DataFrame.transform = transform
+
+# %%

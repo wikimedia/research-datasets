@@ -9,12 +9,10 @@ Pageview data for COVID pages:
 
 #%%
 
-make_trace = F.udf(lambda p,t: f'{p}/{t}', 'string')
 page_cols = [
     F.col('page.project').alias('project'), 
-    F.col('page.is_covid').alias('is_covid'), 
-    make_trace('page.project', 'page.title').alias('trace')]
-
+    F.col('page.title').alias('trace'), 
+    F.col('page.is_covid').alias('is_covid')] 
 
 @F.udf(returnType=sessions.schema['session'].dataType)
 def only_covid_and_control(contains_covid, session):
@@ -39,7 +37,9 @@ covid_with_control = (sessions
     .withColumn('trace', make_control('trace', 'is_covid')))
 
 buckets = ['year', 'week', 'country']
-dataset = k_anonymous_dataset(covid_with_control, 500, buckets).cache()
+dataset = (k_anonymous_dataset(covid_with_control, 500, buckets)
+    .select(buckets + ['project', F.col('trace').alias('title'), F.col('count').alias('views')])
+    .cache())
 
 #%% 
 do_it = False
@@ -48,3 +48,5 @@ if do_it:
         .coalesce(1)
         .write.mode("overwrite").csv('covid/datasets/covid_pageviews', compression='none', sep='\t'))
     dataset.printSchema()
+
+# %%

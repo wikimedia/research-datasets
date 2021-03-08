@@ -1,12 +1,46 @@
 """
-interactive notebook for k-anomimity analysis
+interactive notebook for k-anomymity analysis
 """
 
+#%%
+
+sessions = spark.read.parquet('covid/covid_sessions')
+
+#%%
+
+all_time_geography_columns = ['year', 'month', 'week', 'day', 'continent', 'country']
+
+time_buckets = {
+    'no_time': [],
+    'monthly': ['year', 'month'],
+    'daily': ['year', 'month', 'day'],
+    'weekly': ['year', 'week'],
+}
+
+geography_buckets = {
+    'no_geography': [],
+    'continent': ['continent'],
+    'country': ['continent', 'country'],
+}
+
+covid_buckets = {
+    'all': None,
+    'covid': True,
+    'no covid': False
+}
+
+
+@F.udf(returnType=T.IntegerType())
+def extract_week(year, month, day):
+    return datetime.date(year, month, day).isocalendar()[1]
+
+#%%
 
 all_reading_traces = (sessions
     .withColumn('week', extract_week('year', 'month', 'day'))
     .select(all_time_geography_columns + [ F.explode(F.col('session')).alias('page')]))
 
+#%%
 
 # project|k_anonymity_bin|pageviews|distinct_pages|threshold_bin
 def k_anonymity_bins(bins, time_geo_columns, filter_covid=None):
@@ -17,7 +51,7 @@ def k_anonymity_bins(bins, time_geo_columns, filter_covid=None):
         reading_traces = (all_reading_traces
             .filter(F.col('page.is_covid')==filter_covid))
 
-    reading_traces = reading_traces.select(all_time_geography_columns + ['page.qid', 'page.project']))
+    reading_traces = reading_traces.select(all_time_geography_columns + ['page.qid', 'page.project'])
 
     # project, pageviews, distinct_pages
     by_project = (reading_traces
@@ -68,13 +102,15 @@ def k_anonymity_bins(bins, time_geo_columns, filter_covid=None):
     return joined
 
 #%%
-bins = [30,100,500,1000]
+bins = [30]
+# bins = [30,100,500,1000]
 
 bucket_combinations = list(itertools.product(time_buckets.keys(), geography_buckets.keys()))
+
 unioned = None
-for time_bucket, geography_bucket in bucket_combinations:
+for time_bucket, geography_bucket in bucket_combinations[:1]:
     name = f'{time_bucket} - {geography_bucket}'
-    stats = (k_anonymity_bins(time_buckets[time_bucket] + geography_buckets[geography_bucket])
+    stats = (k_anonymity_bins(bins, time_buckets[time_bucket] + geography_buckets[geography_bucket])
         .withColumn('time_geo_bucket', F.lit(name)))
     unioned = unioned.union(stats) if unioned is not None else stats
 
@@ -90,7 +126,9 @@ for b in bins:
 
 unioned = unioned.select(first+arranged_bins)
 
-with pd.ExcelWriter('/home/fab/covid_k_anonymity_no_covid.xlsx', engine='xlsxwriter') as excel_writer:
+with pd.ExcelWriter('/home/fab/covid_k_anonymityXXX.xlsx', engine='xlsxwriter') as excel_writer:
     (unioned
         .toPandas()
         .to_excel(excel_writer, sheet_name=name, index=False))
+
+# %%
