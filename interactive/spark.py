@@ -25,7 +25,7 @@ import re
 import wmfdata
 
 # %%
-spark = wmfdata.spark.get_session(app_name = 'coviding', ship_python_env=False)
+spark = wmfdata.spark.get_session(app_name = 'interactive', ship_python_env=False)
 
 from pyspark.sql import Row, SparkSession, Window
 import pyspark.sql.functions as F
@@ -37,3 +37,4 @@ from pyspark.sql.dataframe import DataFrame
 def transform(self, func):
     return func(self)
 DataFrame.transform = transform
+# %%
