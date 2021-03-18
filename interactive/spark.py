@@ -4,8 +4,7 @@
 ! pip install python-swiftclient
 ! pip install imageio
 ! pip install xlsxWriter
-# !pip install --ignore-installed --upgrade git+https://github.com/wikimedia/wmfdata-python.git@release
-! pip install --ignore-installed --upgrade git+https://github.com/ottomata/wmfdata.git@conda
+! pip install --ignore-installed --upgrade git+https://github.com/wikimedia/wmfdata-python.git@release
 
 #%%
 import imageio
@@ -37,4 +36,5 @@ from pyspark.sql.dataframe import DataFrame
 def transform(self, func):
     return func(self)
 DataFrame.transform = transform
+
 # %%

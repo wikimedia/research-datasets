@@ -16,11 +16,62 @@ import requests
 from requests.adapters import HTTPAdapter
 import wmfdata
 
+# %%
+
+# measurments from a test:
+mb_per_image = 61.8e3/1e6
+images_per_second_per_thread = 1e6/(4.6*60*60)/(20*4)
+# images on commons to download
+num_commons = 53e6
+
+#config
+num_images=num_commons
+# num_images=1e6
+file_size=250
+
+num_cores=80
+query_per_seconds=100
+
+total_mb=num_images*mb_per_image
+print(f'for {num_images} images, expected GB {num_images*mb_per_image/1e3} of image data')
+print(f'use {num_images*mb_per_image/file_size} partitions for files of size {file_size}mb')
+print(f'expected total duration with {num_cores} cores: {num_images/images_per_second_per_thread/3600/24/num_cores} days')
+# print(f'for a {query_per_seconds} qps to swift, use {query_per_seconds/images_per_second_per_thread} cores')
+# print(f'expected total duration: {num_images/query_per_seconds/3600}h ')
+
+# seconds_per_image = (4.6*60*60)/1e6
+# print(f'expected total duration for {num_images} images: {num_images*seconds_per_image/3600/24} days')
 
 
 #%%
+
+# measurments from a test:
+mb_per_image = 20*300/1e5
+images_per_second_executor = 1e5/(1.4*60*60)/10
+# images on commons to download
+num_commons = 53e6
+
+#config
+# num_images=num_commons
+num_images=1e6
+file_size=250
+
+num_cores=20
+query_per_seconds=100
+
+total_mb=num_images*mb_per_image
+print(f'for {num_images} images, expected GB {num_images*mb_per_image/1e3} of image data')
+print(f'use {num_images*mb_per_image/file_size} partitions for files of size {file_size}mb')
+print(f'expected total duration with {num_cores} cores: {num_images/images_per_second_executor/3600/24/num_cores} days')
+# print(f'for a {query_per_seconds} qps to swift, use {query_per_seconds/images_per_second_executor} executors')
+# print(f'expected total duration: {num_images/query_per_seconds/3600}h ')
+
+seconds_per_image = 34*60/1e5
+print(f'expected total duration for {num_images} images: {num_images*seconds_per_image/3600/24} days')
+
+#%%
 # the number of workers allocated to this spark application querying swift. 
-swift_load = 50
+swift_load = 20
 
 spark_config = {
     'spark.driver.extraJavaOptions' : ' '.join('-D{}={}'.format(k, v) for k, v in {
@@ -37,8 +88,8 @@ spark_config = {
 }   
 
 swift_host = "https://ms-fe.svc.eqiad.wmnet"
-# retries = 5
-timeout =  5
+max_retries = 5
+timeout =  15
 wiki_db = "commons"
 thumb_size = "400px"
 
@@ -84,33 +135,18 @@ def get_image_bytes(wiki_db, file_name, thumb_size):
 
 @F.udf(returnType=T.ArrayType(T.StringType()))
 def download_image(file_name):
-    try:
-        image_bytes = get_image_bytes(wiki_db, file_name, thumb_size)
-        return (base64.b64encode(image_bytes).decode('utf-8'), None)
-    except Exception as e:
-        print(f"swift download error for file {file_name}. Exception: {e}")
-        return (None, str(e))
+    #built in retries causes some dependency issue on the worker, doing retries manually
+    error=None
+    for retry_count in range(max_retries):
+        try:
+            image_bytes = get_image_bytes(wiki_db, file_name, thumb_size)
+            return (base64.b64encode(image_bytes).decode('utf-8'), None)
+        except Exception as e:
+            print(f"try {retry_count}, swift download error for file {file_name}. Exception: {e}")
+            error=str(e)
+    return (None, error)
 
-#%%
-# measurments from a test:
-mb_per_image = 20*300/1e5
-images_per_second_executor = 1e5/(1.4*60*60)/10
-# images on commons to download
-num_commons = 53e6
-
-#config
-num_images=num_commons
-# num_images=1e6
-file_size=215
-query_per_seconds=100
-
-total_mb=num_images*mb_per_image
-print(f'for {num_images} images, expected GB {num_images*mb_per_image/1e3} of image data')
-print(f'use {num_images*mb_per_image/file_size} partitions for files of size {file_size}mb')
-print(f'for a {query_per_seconds} qps to swift, use {query_per_seconds/images_per_second_executor} executors')
-print(f'expected total duration: {num_images/query_per_seconds/3600}h ')
-
-#%%
+# %%
 def download_images(input_df, partitions):
     """
     `input_df` is expected to have a `image_file_name` column
@@ -135,7 +171,7 @@ def download_images(input_df, partitions):
 
     return (with_images_bytes, download_errors)
 
-#%%
+# %%
 
 commons_cols = [
     "page_id",
@@ -158,6 +194,8 @@ wiki_db = "commons"
 snapshot = '2021-01'                   
 commons_hdfs_output_dir = 'commons_images/'
 commons_download_errors_dir = 'commons_images_errors/'
+
+# %%
 wiki = (swift_spark
     .sql(f"""
     select * from wmf.mediawiki_wikitext_current where snapshot='{snapshot}' and wiki_db='{wiki_db}wiki'
@@ -166,7 +204,7 @@ wiki = (swift_spark
 
 wiki = wiki.filter(filter_images("page_title")).select(commons_cols)
 
-#%%
+# %%
 
 
 # commons_images_schema = (T.StructType()
@@ -187,18 +225,24 @@ wiki = wiki.filter(filter_images("page_title")).select(commons_cols)
 #     .add("image_bytes_b64", T.StringType(), True))
 
 
-#%%
+# %%
 
 test = (wiki
     .withColumn('image_file_name', image_file_name('page_title'))
     # .limit(10))
+    # .limit(100000))
     .limit(1000000))
 # T.StructType(commons_images_schema.fields+image_bytes_schema.fields)
 
-#%%
-
+# %%
+# test.show()
 images,errors = download_images(test,240)
 
+#%%
+images.count()
+# errors.count()
+
+#%%
 (images
     .withColumn('image_bytes_b64_sha1', F.sha1(F.col('image_bytes_b64')))
     .write.mode("overwrite").save(commons_hdfs_output_dir)
@@ -209,15 +253,30 @@ images,errors = download_images(test,240)
     .write.mode("overwrite").save(commons_download_errors_dir)
 )
 
-#%%
+# %%
 # images.count()
 
 images = spark.read.parquet(commons_hdfs_output_dir)
 #%%
-errors = swift_spark.read.parquet(commons_download_errors_dir)
+errors = spark.read.parquet(commons_download_errors_dir)
+
+#%%
+e = errors.select('image_file_name', 'download_error').limit(200).collect()
 #%%
 
-# errors.select('page_title','download_error').limit(10).collect()
+f = 'Lingo_Street,_Northside,_Cincinnati,_OH_(39814660943).jpg' 
+
+images.filter(F.col('image_file_name')==f).show()
+
+
+#%%
+
+file_type = F.udf(lambda fn: fn.split('.')[-1], 'string')
+
+t = images.withColumn('file_type', file_type('image_file_name')).groupBy('file_type').count().orderBy('count', ascending=False).cache()
+t.show()
+#%%
+
 # x = images.limit(10).select('image_bytes_b64').collect()
 bb = base64.b64decode(x[0].image_bytes_b64)
 image = Image.open(BytesIO(bb))
