@@ -17,9 +17,6 @@ import requests
 from requests.adapters import HTTPAdapter
 import wmfdata
 
-# %%
-
-
 #%%
 # the number of workers allocated to this spark application querying swift. 
 swift_load = 20
@@ -62,8 +59,10 @@ timeout =  15
 
 #%%
 
-import findspark
-findspark.init('/usr/lib/spark2')
+swift_spark = wmfdata.spark.get_session(
+    app_name='repartition wiki images', 
+    extra_settings={'spark.jars.packages': 'org.apache.spark:spark-avro_2.11:2.4.4'},
+    ship_python_env=False)
 
 from pyspark.sql import Row, SparkSession, Window
 import pyspark.sql.functions as F
@@ -162,8 +161,7 @@ def commons_images_to_hdfs(
     schema with the image bytes as base64 encoded strings
     in avro encoded files
     """
-    spark = wmfdata.spark.get_session(app_name = 'repartition wiki images', ship_python_env=False)
-
+    global swift_spark
     print(f'calculating the number of partitions required for a target file size {desired_file_size_mb}')
     wiki = swift_spark.sql(f"select * from wmf.mediawiki_wikitext_current where snapshot='{snapshot}'")
     wiki = wiki.where(F.col("wiki_db")==f'{wiki_db}wiki') if wiki_db is not None else wiki
@@ -182,14 +180,24 @@ def commons_images_to_hdfs(
     print(f"repartitioning the input wiki into {num_partitions} files for batched downloads")
     (wiki
         .repartition(num_partitions)
-        .write.format("avro").mode("overwrite").save(temp_wiki_dir))
+        # .write.format("avro").mode("overwrite").save(temp_wiki_dir))
+        .write.format("parquet").mode("overwrite").save(temp_wiki_dir))
+
+    swift_spark.stop()
+    swift_spark = wmfdata.spark.get_custom_session(
+        master="yarn",
+        app_name="swifting",
+        spark_config=spark_config)
+
+
 
     print(f"downloading images from swift using {swift_load} executors")
-    files_per_batch=int(mb_per_swift_job/desired_file_size_mb)
+    files_per_batch=int(mb_per_swift_job/desired_file_size_mb)   
     print(f"using {math.ceil(num_partitions/files_per_batch)} spark jobs, processing around {files_per_batch} files ({mb_per_swift_job}MB) each")
     for batch, file_range in enumerate([range(i,min(num_partitions, i + files_per_batch)) for i in range(0, num_partitions, files_per_batch)]):
         paths = [f'{temp_wiki_dir}part-{f:05d}-*' for f in file_range ]
-        wiki_batch = swift_spark.read.format('avro').load(paths)
+        # wiki_batch = swift_spark.read.format('avro').load(paths)        
+        wiki_batch = swift_spark.read.parquet(paths)        
         images, errors = download_images(input_df=wiki_batch, thumb_size=thumb_size, partitions=None)
         print(f'downloading batch {batch} - files {file_range}')
         (images
