@@ -47,7 +47,7 @@ def estimate_partitions(num_images, file_size_mb=200):
     num_partitions=int(num_images*mb_per_image/file_size_mb)
     total_mb=num_images*mb_per_image
     print('estimate required number of partitions')
-    print(f'for {num_images} images, expected GB {num_images*mb_per_image/1e3} of image data')
+    print(f'for {num_images} images, expected GB {num_images*mb_per_image/1e3} of image data for 400px thumbnails')
     print(f'use {num_partitions} partitions for files of size {file_size_mb}mb')
     print(f'expected total duration with {num_cores} cores: {num_images/images_per_second_per_thread/3600/24/num_cores} days')
     return num_partitions
@@ -58,7 +58,7 @@ max_retries = 5
 timeout =  15
 
 #%%
-
+#TODO just do findspark here for the imports, only create the sessions when needed using the proper config
 swift_spark = wmfdata.spark.get_session(
     app_name='repartition wiki images', 
     extra_settings={'spark.jars.packages': 'org.apache.spark:spark-avro_2.11:2.4.4'},
@@ -67,7 +67,6 @@ swift_spark = wmfdata.spark.get_session(
 from pyspark.sql import Row, SparkSession, Window
 import pyspark.sql.functions as F
 import pyspark.sql.types as T
-from operator import add
 from pyspark import StorageLevel
 #%%
 
@@ -161,33 +160,34 @@ def commons_images_to_hdfs(
     schema with the image bytes as base64 encoded strings
     in avro encoded files
     """
+    #TODO remove global context when finished
     global swift_spark
-    print(f'calculating the number of partitions required for a target file size {desired_file_size_mb}')
-    wiki = swift_spark.sql(f"select * from wmf.mediawiki_wikitext_current where snapshot='{snapshot}'")
-    wiki = wiki.where(F.col("wiki_db")==f'{wiki_db}wiki') if wiki_db is not None else wiki
-    wiki = wiki.filter(filter_images("page_title")).select(commons_cols)
+    # print(f'calculating the number of partitions required for a target file size {desired_file_size_mb}')
+    # wiki = swift_spark.sql(f"select * from wmf.mediawiki_wikitext_current where snapshot='{snapshot}'")
+    # wiki = wiki.where(F.col("wiki_db")==f'{wiki_db}wiki') if wiki_db is not None else wiki
+    # wiki = wiki.filter(filter_images("page_title")).select(commons_cols)
 
-    wiki  = (wiki
-        .withColumn('image_file_name', image_file_name('page_title'))
-        #.limit(10))
-        .limit(100000))
-        #.limit0000))
+    # wiki  = (wiki
+    #     .withColumn('image_file_name', image_file_name('page_title'))
+    #     #.limit(10))
+    #     .limit(100000))
+    #     #.limit0000))
 
-    # num_images = wiki.count()
-    num_images = 100000
-    num_partitions = estimate_partitions(num_images, desired_file_size_mb)
+    # # num_images = wiki.count()
+    # num_images = 100000
+    # num_partitions = estimate_partitions(num_images, desired_file_size_mb)
 
-    print(f"repartitioning the input wiki into {num_partitions} files for batched downloads")
-    (wiki
-        .repartition(num_partitions)
-        # .write.format("avro").mode("overwrite").save(temp_wiki_dir))
-        .write.format("parquet").mode("overwrite").save(temp_wiki_dir))
+    # print(f"repartitioning the input wiki into {num_partitions} files for batched downloads")
+    # (wiki
+    #     .repartition(num_partitions)
+    #     .write.format("avro").mode("overwrite").save(temp_wiki_dir))
+    #     # .write.format("parquet").mode("overwrite").save(temp_wiki_dir))
 
-    swift_spark.stop()
-    swift_spark = wmfdata.spark.get_custom_session(
-        master="yarn",
-        app_name="swifting",
-        spark_config=spark_config)
+    # swift_spark.stop()
+    # swift_spark = wmfdata.spark.get_custom_session(
+    #     master="yarn",
+    #     app_name="swifting",
+    #     spark_config=spark_config)
 
 
 
@@ -212,9 +212,14 @@ def commons_images_to_hdfs(
 # %%
 # sn='2021-01'
 # swift_spark.sql(f"select * from wmf.mediawiki_wikitext_current where snapshot='{sn}'").show()
-commons_images_to_hdfs(images_hdfs_output='test_images/',snapshot='2021-02',thumb_size='400px',desired_file_size_mb=200,mb_per_swift_job=25,swift_download_errors='test_errors/')
+commons_images_to_hdfs(
+    images_hdfs_output='test_images/',
+    snapshot='2021-02',
+    thumb_size='400px',
+    desired_file_size_mb=200,
+    mb_per_swift_job=25,
+    swift_download_errors='test_errors/')
 # %%
-
 
 images = swift_spark.read.format('avro').load('test_images/*').show()
 #%%
