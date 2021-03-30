@@ -8,6 +8,7 @@ from PIL import Image
 
 import numpy as np
 import pandas as pd
+import wmfdata
 
 
 # TODO, when yarn labels are available, add the label configuration to 
