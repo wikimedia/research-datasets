@@ -3,8 +3,10 @@ Generate covid dataset for public release
 """
 
 #%%
-
 sessions = spark.read.parquet('covid/covid_sessions')
+
+# from redirects import article_redirects
+redirects = article_redirects('2021-01').cache()
 
 #%%
 

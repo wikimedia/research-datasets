@@ -7,15 +7,18 @@ One-hop reader sessions that include a COVID page:
 - example: In March of 2020, there were a 147 occurences of readers accessing the page `es.wikipedia/Coronavirus` followed by `es.wikipedia/Virus` from Argentina 
 """
 
+# the extract_traces udf generates patterns of various 
+# lenghts from a session. for the one hop covid dataset, 
+# we only consider length 2.
 n_hop_lengths = [2]
-
 @F.udf(returnType=T.ArrayType(T.ArrayType(T.StringType(), True), True))
 def extract_traces(session):
     traces = []
     # deduplicate repeated page, a->b->a is ok, a->a->b becomes is a->b
     session = [g[0] for g in itertools.groupby(session)]
-    for n_hop_length in n_hop_lengths:
-        for i in range(len(session)-n_hop_length+1):
+    for n_hop_length in
+     n_hop_lengths:
+        for i in range(en(session)-n_hop_length+1):
             session_trace = session[i:i+n_hop_length]
             if len(session_trace) == n_hop_length:
                 projs = set()

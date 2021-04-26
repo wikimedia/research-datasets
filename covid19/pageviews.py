@@ -9,10 +9,13 @@ Pageview data for COVID pages:
 
 #%%
 
+make_wiki_id = F.udf(lambda proj: proj.split('.')[0] + 'wiki', 'string')
+
 page_cols = [
-    F.col('page.project').alias('project'), 
-    F.col('page.title').alias('trace'), 
+    make_wiki_id(F.col('page.project')).alias('project'), 
+    F.col('page.title').alias('title'), 
     F.col('page.is_covid').alias('is_covid')] 
+
 
 @F.udf(returnType=sessions.schema['session'].dataType)
 def only_covid_and_control(contains_covid, session):
@@ -34,10 +37,15 @@ covid_with_control = (sessions
     .withColumn('session', only_covid_and_control('contains_covid', 'session'))
     .select(all_time_geography_columns + [ F.explode('session').alias('page')])
     .select(all_time_geography_columns + page_cols)
-    .withColumn('trace', make_control('trace', 'is_covid')))
+    .join(
+        redirects, 
+        (F.col('title') == F.col('title_from')) & (F.col('project') == F.col('wiki_db')),
+        how='leftouter')
+    .withColumn('title', F.coalesce(F.col('title_to'), F.col('title')).alias('title'))
+    .withColumn('trace', make_control('title', 'is_covid')))
 
 buckets = ['year', 'week', 'country']
-dataset = (k_anonymous_dataset(covid_with_control, 500, buckets)
+dataset = (k_anonymous_dataset(covid_with_control, 100, buckets)
     .select(buckets + ['project', F.col('trace').alias('title'), F.col('count').alias('views')])
     .cache())
 
@@ -46,7 +54,46 @@ do_it = False
 if do_it:
     (dataset
         .coalesce(1)
-        .write.mode("overwrite").csv('covid/datasets/covid_pageviews', compression='none', sep='\t'))
+        .write.mode("overwrite").csv('covid/datasets/covid_pageviews_redirected', compression='none', sep='\t'))
     dataset.printSchema()
+
+# %%
+
+pvs = (T.StructType()
+    .add("year", T.IntegerType(), True)
+    .add("week", T.IntegerType(), True)
+    .add("country", T.StringType(), True)
+    .add("project", T.StringType(), True)
+    .add("title", T.StringType(), True)
+    .add("views", T.IntegerType(), True))
+dataset = spark.read.csv('covid/datasets/covid_pageviews_redirected', schema=pvs, sep='\t').cache()
+# %%
+
+def plot_top_pages(country, topn=10):
+    top_pages = (dataset
+        .where(F.col('country')==country)
+        .where(F.col('views')<20000)
+        .groupBy('title')
+        .sum('views')
+        .orderBy('sum(views)',ascending=False)        
+        .limit(topn)
+        .collect())
+    pv = (dataset
+#         .where(F.col('project')=='en.wikipedia')
+        .where(F.col('title').isin([r.title for r in top_pages]))
+        .where(F.col('country')==country )
+        .where(F.col('title')!='control')
+        .groupby(['week','title'])
+        .agg(F.sum('views').alias('views'))
+        .orderBy('week')
+    ).toPandas()
+    pivoted = pv.pivot(index='week', columns='title', values='views')
+    # pivoted = pivoted/pivoted.max(axis=0)
+    pivoted.plot()
+# %%
+plot_top_pages('Canada')
+# %%
+import matplotlib.pyplot as plt
+plt.rcParams['figure.figsize'] = [12, 8]
 
 # %%
