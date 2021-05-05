@@ -1,5 +1,10 @@
 #%%
 
+# en.wikipedia -> enwiki
+@F.udf(returnType='string')
+def make_wiki_db(proj):
+    return proj.split('.')[0] + 'wiki'
+
 def article_redirects(snapshot, wiki_id=None):
     
     wikipedia = (spark

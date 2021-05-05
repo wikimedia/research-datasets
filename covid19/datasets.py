@@ -1,12 +1,7 @@
-"""
-Generate covid dataset for public release
-"""
 
 #%%
-sessions = spark.read.parquet('covid/covid_sessions')
-
-# from redirects import article_redirects
-redirects = article_redirects('2021-01').cache()
+# sessions = spark.read.parquet('covid/covid_sessions').cache()
+sessions = spark.read.parquet('covid/covid_sessions_redirected').cache()
 
 #%%
 
@@ -14,8 +9,16 @@ all_time_geography_columns = ['year', 'month', 'week', 'day', 'continent', 'coun
 
 @F.udf(returnType=T.IntegerType())
 def extract_week(year, month, day):
+    import datetime
     return datetime.date(year, month, day).isocalendar()[1]
 
+
+@F.udf(returnType=T.IntegerType())
+def floor_to_100(count):
+    import math
+    return math.floor(count/100)*100
+
+#%%
 
 def k_anonymous_dataset(input_df, k_threshold, time_geo_columns):
     """
@@ -27,6 +30,7 @@ def k_anonymous_dataset(input_df, k_threshold, time_geo_columns):
             F.count('trace').alias('count')
         )
         .where(F.col('count')>k_threshold)
+        .withColumn('count', floor_to_100('count'))
         .orderBy(time_geo_columns)
         .select(time_geo_columns + ['project', 'trace', 'count']))
 
@@ -47,4 +51,3 @@ distinct_covid_pages = (sessions
     .filter(F.col('is_covid'))
     .distinct()
     .cache())
-    

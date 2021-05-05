@@ -1,7 +1,22 @@
-'''
-ipython interactive notebook
-'''
+page_type = (T.StructType()
+    .add("title", T.StringType(), True)
+    .add("page_id", T.StringType(), True)
+    .add("qid", T.StringType(), True)
+    .add("project", T.StringType(), True)
+    .add("namespace_id", T.StringType(), True)
+    .add("is_covid", T.BooleanType(), True)
+    .add("referer_class", T.StringType(), True))
 
+session_schema =  (T.StructType()
+    .add("session", T.ArrayType(page_type, True))
+    .add("contains_covid", T.BooleanType(), True)
+    .add(covid.schema["continent"])
+    .add(covid.schema["country"])
+    .add(covid.schema["timezone"])
+    .add(covid.schema["year"])
+    .add(covid.schema["month"])
+    .add(covid.schema["day"]))
+    
 #%%
 
 covidq="""select * from isaacj.covid19_sessions"""
@@ -113,27 +128,6 @@ pvs = (covid
     .filter(lambda r: r is not None))
 
 
-page_type = (T.StructType()
-    .add("title", T.StringType(), True)
-    .add("page_id", T.StringType(), True)
-    .add("qid", T.StringType(), True)
-    .add("project", T.StringType(), True)
-    .add("namespace_id", T.StringType(), True)
-    .add("is_covid", T.BooleanType(), True)
-    .add("referer_class", T.StringType(), True))
-
-session_schema =  (T.StructType()
-    .add("session", T.ArrayType(page_type, True))
-    .add("contains_covid", T.BooleanType(), True)
-    .add(covid.schema["continent"])
-    .add(covid.schema["country"])
-    .add(covid.schema["timezone"])
-    .add(covid.schema["year"])
-    .add(covid.schema["month"])
-    .add(covid.schema["day"]))
-
-
-
 #%%
 do_it = False
 if do_it:
@@ -164,4 +158,58 @@ sessions.printSchema()
 #  |-- day: integer (nullable = true)
 
 #%%
+
+@F.udf(returnType='string')
+def session_uuid():
+    import uuid
+    return str(uuid.uuid1())
+    
+
+exploded_sessions = (sessions
+    # .withColumn('week', extract_week('year', 'month', 'day'))
+    .withColumn('uuid', session_uuid())
+    .withColumn('page', F.explode('session'))
+    .select('*', 'page.*')
+    .drop('session'))
+    # .repartition(10000))
+
+# from redirects import article_redirects
+redirects = article_redirects('2021-01').cache()
+
+rd_sessions = (exploded_sessions 
+    .withColumn('wikiid', make_wiki_db('project'))
+    .join(
+        (redirects
+            .withColumn('title_from', qq('title_from'))
+            .withColumn('title_to', qq('title_to'))
+        ), 
+        (F.col('title') == F.col('title_from')) & (F.col('wikiid') == F.col('wiki_db')),
+        how='leftouter')
+    .withColumn('title', F.coalesce(F.col('title_to'), F.col('title')))
+    .withColumn('page', F.struct(*[F.col(col) for col in exploded_sessions.select('page.*').columns])) 
+    .drop(*exploded_sessions.select('page.*').columns)
+    .drop('wikiid', 'wiki_db', 'title_from', 'title_to')
+    # .repartition(6000)
+    .groupBy('uuid')
+    .agg(
+        F.collect_list('page').alias('session'),
+        F.first('contains_covid').alias('contains_covid'),
+        F.first('continent').alias('continent'),
+        F.first('country').alias('country'),
+        F.first('timezone').alias('timezone'),
+        F.first('year').alias('year'),
+        F.first('month').alias('month'),
+        F.first('day').alias('day'),
+    )
+    .drop('uuid')    
+)
+#%%
+
+do_it = False
+if do_it:
+    sessions = spark.createDataFrame(rd_sessions,session_schema).cache()
+    sessions.write.mode('overwrite').save("covid/covid_sessions_redirected")
+
+else:
+    sessions = spark.read.parquet('covid/covid_sessions_redirected').cache()
 
