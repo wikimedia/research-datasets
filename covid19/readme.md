@@ -31,7 +31,7 @@ The file `covid_pageviews.tsv` contains
 - example: In the 13th week of 2020 (23 March - 29 March 2020), the page 'Pandémie_de_Covid-19_en_Italie' on French wikipedia was visited 11700 times from readers in Belgium
 - as a control bucket, we include pageview counts to all pages aggregated by week and country. Due to privacy considerations during the collection of the data, the control bucket was sampled at ~1% of all view traffic. The view counts for the `control` title are thus proportional to the total number of pageviews to all pages.
 
-The file is ~10 MB and contains ~134000 data points across the 27 weeks, 108 countries, and 168 projects.
+The file is ~8 MB and contains ~134000 data points across the 27 weeks, 108 countries, and 168 projects.
 
 ### Covid reader session bigrams
 
@@ -41,7 +41,7 @@ The file `covid_session_bigrams.tsv` contains
 - k-anonymity threshold of 100
 - example: In March of 2020, there were a 1000 occurences of readers accessing the page `es.wikipedia/SARS-CoV-2` followed by `es.wikipedia/Orthocoronavirinae` from Chile
 
-The file is ~11 MB and contains ~90000 bigrams across the 6 months, 96 countries, and 56 projects.
+The file is ~10 MB and contains ~90000 bigrams across the 6 months, 96 countries, and 56 projects.
 
 ## License
 
