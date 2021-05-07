@@ -13,31 +13,6 @@ Covid reader sessions bigrams
 # we only consider length 2.
 n_gram_lengths = [2]
 @F.udf(returnType=T.ArrayType(T.ArrayType(T.StringType(), True), True))
-def extract_bigrams(session):
-    import itertools
-    traces = []
-    # deduplicate repeated page, a->b->a is ok, a->a->b becomes is a->b
-    session = [g[0] for g in itertools.groupby(session)]
-    for n_hop_length in n_gram_lengths:
-        for i in range(len(session)-n_hop_length+1):
-            session_trace = session[i:i+n_hop_length]
-            if len(session_trace) == n_hop_length:
-                projs = set()
-                trace = ''
-                is_covid = []
-                for page in session_trace:
-                    trace += f"{page['project']}/{page['title']} -> "
-                    projs.add(page['project'])
-                    is_covid.append(page['is_covid'])
-                proj = list(projs)[0] if len(projs)==1 else 'multiple_wikis' 
-                traces.append((proj, any(is_covid),trace[:-4]))
-    return traces
-
-# the extract_traces udf generates patterns of various 
-# lenghts from a session. for the one hop covid dataset, 
-# we only consider length 2.
-n_gram_lengths = [2]
-@F.udf(returnType=T.ArrayType(T.ArrayType(T.StringType(), True), True))
 def extract_traces(session):
     import itertools
     traces = []
