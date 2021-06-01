@@ -47,9 +47,9 @@ The file is ~10 MB and contains ~90000 bigrams across the 6 months, 96 countries
 
 This data is released under a CC0 1.0 license.
 
-## Citing
+## Data
 
-The datasets are also available [here](TODO add figshare link once available), please see details about how to cite this dataset. 
+The datasets are available [here](https://figshare.com/articles/dataset/COVID-19_Pandemic_Wikipedia_Readership/14548032), please see details about how to cite this dataset. 
 
 ## Contact
 
