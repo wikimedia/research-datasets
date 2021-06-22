@@ -1,12 +1,16 @@
-#%%
+#%% 
+
 # %load_ext autoreload
 # %autoreload 2
 
+from IPython.core.display import display, HTML
+import numpy as np
+import pandas as pd
 import wmfdata
 
 spark = None
 
-create_spark = True
+create_spark = False
 
 if create_spark:
     spark = wmfdata.spark.get_session(
@@ -32,3 +36,5 @@ from pyspark.sql.dataframe import DataFrame
 def transform(self, func):
     return func(self)
 DataFrame.transform = transform
+
+# %%
