@@ -2,7 +2,7 @@
 import base64
 from random import randrange
 import hashlib
-import imageio
+# import imageio
 from io import BytesIO
 import math
 import os
@@ -10,8 +10,10 @@ from PIL import Image
 import requests
 from urllib.parse import unquote
 import wmfdata
-#%%
-# the max number of threads that can query swift at the same time. should be a multiple of 4 
+
+
+# spark configuration suitable for downloading from swift.
+# the max number of threads that can query swift at the same time. should be a multiple of cores_per_executor 
 threads_querying_swift = 80
 cores_per_executor = 4
 executors = int(threads_querying_swift/cores_per_executor)
@@ -30,6 +32,46 @@ spark_config = {
     'spark.driver.memory': '4g',
 }
 
+# TODO should we make this cluster mode?
+# 'spark.submit.deployMode' : 'cluster'
+
+SPARK_HOME = os.environ.get("SPARK_HOME", "/usr/lib/spark2")
+
+def create_spark_context_for_swift():
+
+    # import findspark
+    # findspark.init(SPARK_HOME)
+
+    # conda_packed_file = conda.pack()
+    # # This will be used as the unpacked directory name in the YARN working directory.
+    # conda_packed_name = os.path.splitext(os.path.basename(conda_packed_file))[0]
+
+    # # Ship conda_packed_file to each YARN worker.
+    # conda_spark_archive = f"{conda_packed_file}#{conda_packed_name}"
+    # if "spark.yarn.dist.archives" in spark_config:
+    #     spark_config["spark.yarn.dist.archives"] += f",{conda_spark_archive}"
+    # else:
+    #     spark_config["spark.yarn.dist.archives"] = conda_spark_archive
+
+    # import pyspark
+    # import pyspark.sql
+    # from pyspark.sql import SparkSession
+    # spark = SparkSession.builder.master("yarn").appName("ImageRec-DEV Training").config("spark.submit.deployMode","cluster").getOrCreate()
+
+    return wmfdata.spark.get_custom_session(
+        master="yarn",
+        app_name="swifting",
+        spark_config=spark_config,
+        ship_python_env=True)
+
+
+#%%
+
+
+from pyspark.sql import Row, SparkSession, Window
+import pyspark.sql.functions as F
+import pyspark.sql.types as T
+import pyspark
 
 # %%
 
@@ -42,7 +84,6 @@ images_per_second_per_thread = 1e6/(4.6*60*60)/(20*4)
 # images on commons to download
 num_images_commons = 53e6
 
-# %%
 def estimate_partitions(num_images, thumbnail_size, file_size_mb=200):
     # mb_per_image = mb_per_image_400px * (thumbnail_size**2/400**2)
     mb_per_image = mb_per_image_300px * (thumbnail_size**2/ 300**2)
@@ -53,24 +94,8 @@ def estimate_partitions(num_images, thumbnail_size, file_size_mb=200):
     use {num_partitions} partitions for files of size {file_size_mb}mb
     expected total duration with {threads_querying_swift} cores: {num_images/images_per_second_per_thread/3600/24/threads_querying_swift} days
     """)
-    return num_partitions
-#%%
+    return max(num_partitions,1)
 
-
-#%%
-swift_spark = wmfdata.spark.get_custom_session(
-    master="yarn",
-    app_name="swifting",
-    spark_config=spark_config,
-    ship_python_env=True)
-
-
-from pyspark.sql import Row, SparkSession, Window
-import pyspark.sql.functions as F
-import pyspark.sql.types as T
-import pyspark
-
-# %%
 # TODO these methods should be in their own module eventually  
 def decode_b64(image_b64):
     """decode the base64 encoded image bytes into a byte array"""
@@ -90,7 +115,6 @@ struct<
     error:string
 >
 """ 
-
 
 @F.udf(returnType=image_schema)
 def parse_image(image_bytes_b64):
@@ -116,20 +140,23 @@ def parse_image(image_bytes_b64):
             image_bytes_sha1=None,
             error=str(e))
 
-#%%
+
+
+prefixes = ['File:']
+suffixes = ['.png', '.jpg', '.jpeg', '.gif']
+
+
 @F.udf(returnType=T.BooleanType())
 def filter_images(page_title):
-    """Return true if we are generally interested in this row"""
-    prefixes = ['File:']
-    good_start = any(page_title.startswith(prefix) for prefix in prefixes)
-    suffixes = ['.png', '.jpg', '.jpeg', '.gif']
+    """Return true if we are generally interested in this row"""    
+    good_start = any(page_title.startswith(prefix) for prefix in prefixes)    
     good_end = any(page_title.endswith(suffix) for suffix in suffixes)
     return good_start and good_end
 
 
 swift_host = "https://ms-fe.svc.eqiad.wmnet"
 max_retries = 5
-timeout =  15
+timeout = 15
 
 def get_image_bytes(project, file_name, thumb_size):
     md5 = hashlib.md5(file_name.encode('utf-8')).hexdigest()
@@ -165,7 +192,7 @@ def download_images(input_df, thumb_size, partitions):
         `input` dataframe with a `image_bytes_b64` column containing the image bytes
         `input` dataframe with a `download_error` column containing the errors for each file that wasn't downloaded
     """
-    input_df = input_df.withColumn('thumbnail_size', F.lit(thumb_size))
+    input_df = input_df.withColumn('thumbnail_size', F.lit(f"{thumb_size}px"))
     input_df = input_df.repartition(partitions) if partitions is not None else input_df
     attempted_images_bytes = (input_df
         .withColumn('attempted_thumbnail_b64', download_image('image_file_name', 'project', 'thumbnail_size'))
@@ -196,43 +223,22 @@ commons_cols = [
     "snapshot",
     "wiki_db"] 
 
-
-def repartition_images_files(
-    df, 
-    temp_images_dir='images/temp_images_files/',
-    desired_file_size_mb=200):
-    """
-    repartitions and writes a dataframe in a such a way that once the images
-    for all files in a partition are downloaded in a subsequent job, the 
-    resulting file written the partition has a desired size (200mb is a hdfs friendly number)
-    """
-    print(f'calculating the number of partitions required for a target file size {desired_file_size_mb}')
-
-    num_images = df.count()
-    num_partitions = estimate_partitions(num_images, desired_file_size_mb)
-
-    print(f"repartitioning the input df into {num_partitions} files for batched download jobs")
-    (df
-        .repartition(num_partitions)
-        .write.format("avro").mode("overwrite").save(temp_images_dir))
-    print(f'repartitioned temp files written to : {temp_images_dir}')
-    return num_partitions
-
-
-def swift_images_to_hdfs(
+def swift_images_to_hdfs(     
     images_hdfs_output,
     num_partitions,
-    thumb_size='400px',
+    thumb_size=400,
     temp_images_dir='images/temp_images_files/',
     desired_file_size_mb=200,
     mb_per_swift_job=100000,
     swift_download_errors=None):
-    """
+    """    
     downloads images from swift and extends the input
     schema with the image bytes as base64 encoded strings
     in avro encoded files
     """
-    print(f"downloading images from swift using {swift_load} executors")
+    print(f"creating a swift-friendly spark context")
+    swift_spark = create_spark_context_for_swift()
+    print(f"downloading images from swift using {threads_querying_swift} threads")
     files_per_batch=int(mb_per_swift_job/desired_file_size_mb)   
     print(f"using {math.ceil(num_partitions/files_per_batch)} spark jobs, processing around {files_per_batch} files ({mb_per_swift_job}MB) each")
     for batch, file_range in enumerate([range(i,min(num_partitions, i + files_per_batch)) for i in range(0, num_partitions, files_per_batch)]):
@@ -257,7 +263,7 @@ def swift_images_to_hdfs(
 def append_image_bytes(
     input_df, 
     output_dir,
-    thumb_size='300px',
+    thumb_size=300,
     desired_file_size_mb=200,
     mb_per_swift_job=50000,
     swift_download_errors_dir=None):
@@ -270,7 +276,7 @@ def append_image_bytes(
 
     print(f'calculating the number of partitions required for a target file size {desired_file_size_mb}')
     num_images = input_df.count()
-    num_partitions = estimate_partitions(num_images, desired_file_size_mb)
+    num_partitions = estimate_partitions(num_images=num_images,thumbnail_size=thumb_size,file_size_mb=desired_file_size_mb)
 
     images, errors = download_images(
         input_df=input_df, 
@@ -283,11 +289,16 @@ def append_image_bytes(
     )
     if swift_download_errors_dir is not None:
         print(f"writing errors from swift to {swift_download_errors_dir}")
-        errors.write.csv(
-            path=swift_download_errors_dir,
-            sep='\t',
-            compression='none',
-            mode="overwrite")
+        (errors
+            .write.format("avro").mode("overwrite").save(swift_download_errors_dir)
+        )
+        # errors.write.csv(
+        #     path=swift_download_errors_dir,
+        #     sep='\t',
+        #     compression='none',
+        #     mode="overwrite")
 
     return images, errors
 
+
+# %%

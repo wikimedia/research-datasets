@@ -6,10 +6,12 @@ from setuptools import (
 
 
 setup(
-    name="wmf_research_datasets",
+    name="wmf_research",
     version="0.1",
     install_requires=[
+        "apache-airflow",       
         "findspark",
+        "pillow",
         "wmfdata @ git+https://github.com/wikimedia/wmfdata-python.git@release",
     ],
     packages=find_packages(),
