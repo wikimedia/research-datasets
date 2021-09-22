@@ -5,7 +5,6 @@
 
 # %%
 
-# /user/piccardi/ImageCaptioningCompetition/
 base_output_path = 'images/datasets'
 resnet_embeddings_training = f'{base_output_path}/training/resnet_embeddings/'
 image_pixels_training = f'{base_output_path}/training/image_pixels/'
@@ -113,19 +112,24 @@ if doit:
 # ------------
 # Reading datasets for testing
 
+# %% 
 
 @F.udf(returnType='array<float>')
 def parse_embedding(emb_str):
     return [float(e) for e in emb_str.split(',')]
 
+#%%
 # parse embedding array
 first_emb = (spark.read
     .csv(path=resnet_embeddings_training+'*.csv.gz',sep="\t")
     .select(F.col('_c0').alias('image_url'), parse_embedding('_c1').alias('embedding'))
-    .take(1)[0]
+    .select(F.size('embedding').alias("l"))
+    # .take(1)[0]
+    .distinct()
 )
-
-print(len(first_emb.embedding))
+first_emb.show()
+#%%
+print(first_emb.l)
 # 2048
 
 # %%
@@ -284,4 +288,91 @@ print(spark.read
     .count()
 )
 # 44762
+# %%
+
+# streaming datasets for huggingface 
+
+
+# output a single joined datasets
+# [wit colunns, metadata, pixels, embeddings]
+
+pixels = (spark
+    .read.csv(path=image_pixels_training+'*.csv.gz',sep="\t")
+    .select(F.col('_c0').alias('image_url'), F.col('_c1').alias('b64_bytes'),F.col('_c2').alias('metadata_url'))    
+)
+
+embeddings = (spark.read
+    .csv(path=resnet_embeddings_training+'*.csv.gz',sep="\t")
+    .select(F.col('_c0').alias('image_url'), parse_embedding('_c1').alias('embedding'))
+)
+
+wit_training = (spark.read
+    .csv(path="images/kaggle/train-"+'*.tsv',sep="\t",header=True) 
+    .cache()
+)
+
+# %%
+# join pixels and embeddings 
+
+pixel_embeddings = pixels.join(embeddings, on="image_url")
+
+doit=False
+if doit:
+    pixel_embeddings.write.format("parquet").mode("overwrite").save("images/datasets/training/joined/pixel_embeddings")
+else:
+    pixel_embeddings = spark.read.parquet("images/datasets/training/joined/pixel_embeddings/*")
+#%%
+
+# pivot wit data into (image_url, [ wit_features ])
+
+
+wit_pivoted = (wit_training
+    .where(F.col('image_url').isNotNull())
+    .groupBy('image_url')
+        .agg(
+            F.collect_list(
+                F.struct(wit_training.columns)
+            ).alias('wit_features') 
+        )
+)
+doit=False
+if doit:
+    wit_pivoted.write.format("parquet").mode("overwrite").save("images/datasets/training/joined/wit_pivoted")
+else:
+    wit_pivoted = spark.read.parquet("images/datasets/training/joined/wit_pivoted/*")
+#%%
+
+#%%
+
+doit=False
+if doit:
+    (wit_pivoted.join(pixel_embeddings,on='image_url')
+        .write.format("parquet").mode("overwrite")
+        .save("images/datasets/training/joined/all_pivoted")
+    )
+all_pivoted = spark.read.parquet("images/datasets/training/joined/all_pivoted/*")
+
+#%%
+
+# store as json
+
+doit=False
+if doit:
+    all_pivoted.repartition(400).write.json("images/datasets/training/hugginface",mode='overwrite',compression='gzip')
+
+competition_data = spark.read.json("images/datasets/training/hugginface/*.json.gz").cache()
+ 
+#%%
+# exploration/sanity checks
+
+embeddings_counts = embeddings.groupBy("image_url").count().orderBy("count", ascending=False).limit(500).toPandas()
+embeddings_counts
+# %%
+pixels_counts = pixels.groupBy("image_url").count().orderBy("count", ascending=False).limit(500).toPandas()
+pixels_counts
+# %%
+wit_training_counts = wit_training.groupBy("image_url").count().orderBy("count", ascending=False).limit(500).toPandas()
+wit_training_counts
+#%%
+pixels.groupBy("image_url").count().select("count").distinct().show()
 # %%

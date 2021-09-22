@@ -72,9 +72,12 @@ images = (images
 
 #%%
 # 
-#   
 
-innn = (swift_spark
+
+# a spark context suitable for querying swift
+swift_spark = create_spark_context_for_swift()
+
+images = (swift_spark
     .read
     .parquet("commons_images/input_images/*")
     # .limit(1000)  
@@ -83,12 +86,12 @@ innn = (swift_spark
 #%%    
 
 @F.udf(returnType='string')
-def x(f):
+def extract_file_name(f):
     return f[5:].replace(" ", "_")
     # return quote(f)
 
 append_df = (innn
-    .withColumn("image_file_name", x(F.col('page_title'))) #F.col('page_title'))
+    .withColumn("image_file_name", extract_file_name(F.col('page_title')))
     .withColumn("project", F.lit('commons'))    
 )
 
@@ -130,7 +133,5 @@ ee = (swift_spark
 )
 # %%
 [e.download_error[:4] for e in ee]
-
-
 
 # %%
